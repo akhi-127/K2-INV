@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>K2 Inventory Platform</title>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Geist:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -153,6 +154,29 @@ tr.row-critical td:first-child{border-left:2px solid var(--critical)}
 
 @media(max-width:1100px){.cards{grid-template-columns:repeat(2,1fr)}.battery-cards{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:760px){.app{display:block}.sidebar{width:auto;height:auto;position:relative}.cards{grid-template-columns:1fr}.add-item-form{grid-template-columns:1fr 1fr}}
+
+/* ── AUTH SCREEN ── */
+.auth-screen{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:var(--bg)}
+.auth-box{width:380px;max-width:calc(100vw - 32px);background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:32px;backdrop-filter:blur(12px)}
+.auth-logo{font-family:'Geist',sans-serif;font-size:24px;font-weight:700;color:#fff;margin-bottom:4px;letter-spacing:-.5px}
+.auth-logo span{color:var(--accent)}
+.auth-sub{font-size:12px;color:var(--muted);margin-bottom:28px}
+.auth-tabs{display:flex;gap:2px;background:rgba(255,255,255,.04);border-radius:8px;padding:3px;margin-bottom:22px;border:1px solid var(--line)}
+.auth-tab{flex:1;padding:6px;border-radius:6px;background:none;border:none;color:var(--muted);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s}
+.auth-tab.active{background:var(--panel2);color:#fff}
+.auth-field{margin-bottom:14px}
+.auth-field label{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:5px;letter-spacing:.3px}
+.auth-field input{width:100%;padding:9px 12px;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:8px;color:var(--text);font-family:'Geist',sans-serif;font-size:13px;outline:none;transition:border-color .15s}
+.auth-field input:focus{border-color:rgba(200,169,110,.4);background:rgba(200,169,110,.04)}
+.auth-btn{width:100%;padding:10px;background:var(--accent);color:#111;border:none;border-radius:8px;font-family:'Geist',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;margin-top:4px}
+.auth-btn:hover{background:var(--accent2)}
+.auth-err{font-size:12px;color:var(--critical);margin-top:10px;min-height:18px;text-align:center}
+.auth-loading{font-size:12px;color:var(--muted);text-align:center;margin-top:10px}
+/* sync indicator in sidebar */
+.sync-dot{width:6px;height:6px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:5px;flex-shrink:0}
+.sync-dot.syncing{background:var(--low);animation:pulse .8s infinite}
+.sync-dot.offline{background:var(--faint)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 </style>
 </head>
 <body>
@@ -179,7 +203,29 @@ tr.row-critical td:first-child{border-left:2px solid var(--critical)}
   <path d="M270,320 Q360,295 450,300 Q540,305 630,320" stroke="#5a4830" stroke-width=".8" fill="none" opacity=".3"/>
 </svg>
 
-<div class="app">
+<!-- AUTH SCREEN -->
+<div class="auth-screen" id="authScreen">
+  <div>
+    <!-- K2 mountain watermark behind login -->
+    <svg style="position:fixed;bottom:0;right:0;width:65vw;max-width:860px;pointer-events:none;opacity:.04" viewBox="0 0 900 500" preserveAspectRatio="xMaxYMax meet" fill="none"><polygon points="450,15 200,380 700,380" fill="#4a3c28"/><polygon points="450,15 395,130 505,130" fill="#e8dfc8"/><rect x="0" y="378" width="900" height="122" fill="#1a1510"/></svg>
+    <div class="auth-box">
+      <div class="auth-logo"><span>K2</span> Inventory</div>
+      <div class="auth-sub">Platform v2 — sign in to access your data</div>
+      <div class="auth-tabs">
+        <button class="auth-tab active" onclick="switchAuthTab('login',this)">Sign In</button>
+        <button class="auth-tab" onclick="switchAuthTab('signup',this)">Create Account</button>
+      </div>
+      <div class="auth-field"><label>Email</label><input type="email" id="authEmail" placeholder="you@example.com" onkeydown="if(event.key==='Enter')authSubmit()"></div>
+      <div class="auth-field"><label>Password</label><input type="password" id="authPassword" placeholder="••••••••" onkeydown="if(event.key==='Enter')authSubmit()"></div>
+      <div class="auth-field" id="authConfirmWrap" style="display:none"><label>Confirm Password</label><input type="password" id="authConfirm" placeholder="••••••••" onkeydown="if(event.key==='Enter')authSubmit()"></div>
+      <button class="auth-btn" onclick="authSubmit()" id="authBtn">Sign In</button>
+      <div class="auth-err" id="authErr"></div>
+      <div class="auth-loading hidden" id="authLoading">Please wait…</div>
+    </div>
+  </div>
+</div>
+
+<div class="app" id="mainApp" style="display:none">
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-name"><span class="brand-k">K2</span> Inventory</div>
@@ -206,7 +252,12 @@ tr.row-critical td:first-child{border-left:2px solid var(--critical)}
       </a>
     </div>
     <div class="sidebar-footer">
-      <div class="small">Auto-saves to browser.<br>Data persists between sessions.</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+        <span class="sync-dot" id="syncDot"></span>
+        <span class="small" id="syncStatus">connecting…</span>
+      </div>
+      <div class="small" id="userEmail" style="margin-bottom:8px;word-break:break-all"></div>
+      <button class="sec" style="width:100%;padding:5px;font-size:11px" onclick="signOut()">Sign Out</button>
     </div>
   </aside>
 
@@ -406,22 +457,147 @@ tr.row-critical td:first-child{border-left:2px solid var(--critical)}
 </div>
 
 <script>
+// ══ SUPABASE ══════════════════════════════════════════════════
+const SUPA_URL = 'https://smnyebkymodmrscraezc.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNtbnllYmt5bW9kbXJzY3JhZXpjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4NDk0OTgsImV4cCI6MjA4OTQyNTQ5OH0.gX5QlzFR4JKxMw4EAYdAs-fO7QxwTdpFod93_47ArAk';
+const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
+
+// ══ STATE ══════════════════════════════════════════════════════
 let state={inventory:[],buildLog:[],receiving:[],batteryUnits:[],selectedBatteryUnitId:null};
-const saved=localStorage.getItem("k2_v4");
-if(saved){try{const p=JSON.parse(saved);if(p.inventory){p.inventory=p.inventory.map(r=>({item:r.item,unit:r.unit,initial:Number(r.initial)||0,received:Number(r.received)||0,qtyPerUnit:Number(r.qtyPerUnit)||0,reorder:Number(r.reorder)||0}));}Object.assign(state,p);computeAll();}catch(e){}}
-if(!saved){const old=localStorage.getItem("k2_v3");if(old){try{const p=JSON.parse(old);if(p.inventory){p.inventory=p.inventory.map(r=>({item:r.item,unit:r.unit,initial:Number(r.initial)||0,received:Number(r.received)||0,qtyPerUnit:Number(r.qtyPerUnit)||0,reorder:Number(r.reorder)||0}));}Object.assign(state,p);computeAll();saveLocal();}catch(e){}}}
+let _currentUser = null;
+let _syncTimeout = null;
 
-document.querySelectorAll(".nav a").forEach(a=>{a.onclick=()=>{document.querySelectorAll(".nav a").forEach(x=>x.classList.remove("active"));a.classList.add("active");document.querySelectorAll("main section").forEach(s=>s.classList.add("hidden"));document.getElementById("view-"+a.dataset.view).classList.remove("hidden");};});
-function switchInvTab(tab,btn){document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));btn.classList.add("active");["items","restock","import"].forEach(t=>{document.getElementById("inv-tab-"+t).classList.toggle("hidden",t!==tab);});if(tab==="restock")calculateRestock();}
-
-function toast(msg){const el=document.getElementById("toast");el.textContent=msg;el.classList.add("show");clearTimeout(el._t);el._t=setTimeout(()=>el.classList.remove("show"),2400);}
-
-function saveLocal(){
-  const clean={...state,inventory:state.inventory.map(r=>({item:r.item,unit:r.unit,initial:r.initial,received:r.received,qtyPerUnit:r.qtyPerUnit,reorder:r.reorder}))};
-  localStorage.setItem("k2_v4",JSON.stringify(clean));
-  toast("Saved ✓");
+// ══ AUTH UI ════════════════════════════════════════════════════
+let _authMode = 'login';
+function switchAuthTab(mode, btn){
+  _authMode = mode;
+  document.querySelectorAll('.auth-tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('authBtn').textContent = mode==='login' ? 'Sign In' : 'Create Account';
+  document.getElementById('authConfirmWrap').style.display = mode==='signup' ? '' : 'none';
+  document.getElementById('authErr').textContent = '';
+}
+async function authSubmit(){
+  const email=document.getElementById('authEmail').value.trim();
+  const password=document.getElementById('authPassword').value;
+  const errEl=document.getElementById('authErr');
+  const loadEl=document.getElementById('authLoading');
+  const btn=document.getElementById('authBtn');
+  errEl.textContent=''; errEl.style.color='var(--critical)';
+  if(!email||!password){errEl.textContent='Please enter email and password.';return;}
+  if(_authMode==='signup'){
+    const confirm=document.getElementById('authConfirm').value;
+    if(password!==confirm){errEl.textContent='Passwords do not match.';return;}
+    if(password.length<6){errEl.textContent='Password must be at least 6 characters.';return;}
+  }
+  btn.disabled=true; loadEl.classList.remove('hidden');
+  try{
+    let result;
+    if(_authMode==='login'){
+      result=await sb.auth.signInWithPassword({email,password});
+    } else {
+      result=await sb.auth.signUp({email,password});
+    }
+    if(result.error){errEl.textContent=result.error.message;}
+    else if(_authMode==='signup'&&!result.data.session){
+      errEl.style.color='var(--ok)';
+      errEl.textContent='Check your email to confirm, then sign in.';
+    }
+  } catch(e){errEl.textContent='Connection error. Try again.';}
+  btn.disabled=false; loadEl.classList.add('hidden');
+}
+async function signOut(){
+  setSyncStatus('offline','Signing out…');
+  await sb.auth.signOut();
+  _currentUser=null;
+  state={inventory:[],buildLog:[],receiving:[],batteryUnits:[],selectedBatteryUnitId:null};
+  document.getElementById('mainApp').style.display='none';
+  document.getElementById('authScreen').style.display='flex';
+  document.getElementById('authEmail').value='';
+  document.getElementById('authPassword').value='';
+  document.getElementById('authErr').textContent='';
 }
 
+// ══ SYNC STATUS ════════════════════════════════════════════════
+function setSyncStatus(s,msg){
+  const dot=document.getElementById('syncDot'),txt=document.getElementById('syncStatus');
+  if(!dot||!txt)return;
+  dot.className='sync-dot'+(s==='syncing'?' syncing':s==='offline'?' offline':'');
+  txt.textContent=msg;
+}
+
+// ══ CLOUD ══════════════════════════════════════════════════════
+function cleanState(){
+  return{...state,inventory:state.inventory.map(r=>({item:r.item,unit:r.unit,initial:r.initial,received:r.received,qtyPerUnit:r.qtyPerUnit,reorder:r.reorder}))};
+}
+async function loadFromCloud(){
+  if(!_currentUser)return;
+  setSyncStatus('syncing','Loading…');
+  try{
+    const{data,error}=await sb.from('user_data').select('state').eq('user_id',_currentUser.id).maybeSingle();
+    if(error)throw error;
+    if(data?.state){
+      const s=data.state;
+      if(s.inventory)s.inventory=s.inventory.map(r=>({item:r.item,unit:r.unit,initial:Number(r.initial)||0,received:Number(r.received)||0,qtyPerUnit:Number(r.qtyPerUnit)||0,reorder:Number(r.reorder)||0}));
+      Object.assign(state,s);
+      localStorage.setItem('k2_v4',JSON.stringify(s));
+    } else {
+      // First login — migrate from localStorage if anything exists
+      const local=localStorage.getItem('k2_v4');
+      if(local){try{const p=JSON.parse(local);if(p.inventory){p.inventory=p.inventory.map(r=>({item:r.item,unit:r.unit,initial:Number(r.initial)||0,received:Number(r.received)||0,qtyPerUnit:Number(r.qtyPerUnit)||0,reorder:Number(r.reorder)||0}));}Object.assign(state,p);await pushToCloud(true);}catch(e){}}
+    }
+    setSyncStatus('ok','Synced ✓');
+  } catch(e){
+    setSyncStatus('offline','Offline — local only');
+    const local=localStorage.getItem('k2_v4');
+    if(local){try{const p=JSON.parse(local);if(p.inventory){p.inventory=p.inventory.map(r=>({item:r.item,unit:r.unit,initial:Number(r.initial)||0,received:Number(r.received)||0,qtyPerUnit:Number(r.qtyPerUnit)||0,reorder:Number(r.reorder)||0}));}Object.assign(state,p);}catch(e){}}
+  }
+}
+async function pushToCloud(silent=false){
+  if(!_currentUser)return;
+  if(!silent)setSyncStatus('syncing','Saving…');
+  try{
+    const{error}=await sb.from('user_data').upsert({user_id:_currentUser.id,state:cleanState(),updated_at:new Date().toISOString()},{onConflict:'user_id'});
+    if(error)throw error;
+    if(!silent)setSyncStatus('ok','Saved to cloud ✓');
+  } catch(e){setSyncStatus('offline','Cloud save failed — saved locally');}
+}
+
+// ══ PERSIST ════════════════════════════════════════════════════
+function saveLocal(){
+  localStorage.setItem('k2_v4',JSON.stringify(cleanState()));
+  toast('Saved ✓');
+  clearTimeout(_syncTimeout);
+  _syncTimeout=setTimeout(()=>pushToCloud(),1000);
+}
+
+// ══ AUTH LISTENER ══════════════════════════════════════════════
+sb.auth.onAuthStateChange(async(event,session)=>{
+  if(session?.user){
+    _currentUser=session.user;
+    document.getElementById('userEmail').textContent=_currentUser.email;
+    document.getElementById('authScreen').style.display='none';
+    document.getElementById('mainApp').style.display='flex';
+    await loadFromCloud();
+    computeAll();
+    renderStatusPills('Assembly');
+    updateConsumeNotice(true);
+    document.getElementById('receiveDate').valueAsDate=new Date();
+    document.getElementById('unitDate').valueAsDate=new Date();
+  } else {
+    document.getElementById('mainApp').style.display='none';
+    document.getElementById('authScreen').style.display='flex';
+    setSyncStatus('offline','Not signed in');
+  }
+});
+
+// ══ NAV ════════════════════════════════════════════════════════
+document.querySelectorAll('.nav a').forEach(a=>{a.onclick=()=>{document.querySelectorAll('.nav a').forEach(x=>x.classList.remove('active'));a.classList.add('active');document.querySelectorAll('main section').forEach(s=>s.classList.add('hidden'));document.getElementById('view-'+a.dataset.view).classList.remove('hidden');};});
+function switchInvTab(tab,btn){document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');['items','restock','import'].forEach(t=>{document.getElementById('inv-tab-'+t).classList.toggle('hidden',t!==tab);});if(tab==='restock')calculateRestock();}
+
+function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('show');clearTimeout(el._t);el._t=setTimeout(()=>el.classList.remove('show'),2400);}
+
+// ══ CORE COMPUTE ═══════════════════════════════════════════════
 function computeAll(){
   const built=state.buildLog.reduce((s,r)=>s+(Number(r.unitsBuilt)||0),0);
   state.inventory=state.inventory.map(row=>{
@@ -433,323 +609,269 @@ function computeAll(){
   });
   renderAll();
 }
-
-function getStatus(r){const rem=Number(r.remaining),ro=Number(r.reorder);if(rem<=ro)return"critical";if(rem<=ro*1.5)return"low";return"healthy";}
-
+function getStatus(r){const rem=Number(r.remaining),ro=Number(r.reorder);if(rem<=ro)return'critical';if(rem<=ro*1.5)return'low';return'healthy';}
 function renderAll(){renderKPIs();renderAlerts();renderDash();renderBuildableTable();renderInventory();renderReceiving();renderBatteryUnits();renderBuildHistory();}
-
-function filteredRows(){const q=(document.getElementById("search")?.value||"").toLowerCase().trim(),sf=document.getElementById("statusFilter")?.value||"all";return state.inventory.filter(r=>{const matchQ=!q||String(r.item).toLowerCase().includes(q),st=getStatus(r);return matchQ&&(sf==="all"||sf===st);});}
+function filteredRows(){const q=(document.getElementById('search')?.value||'').toLowerCase().trim(),sf=document.getElementById('statusFilter')?.value||'all';return state.inventory.filter(r=>{const matchQ=!q||String(r.item).toLowerCase().includes(q),st=getStatus(r);return matchQ&&(sf==='all'||sf===st);});}
 
 function renderKPIs(){
-  const low=state.inventory.filter(r=>getStatus(r)==="low").length,critical=state.inventory.filter(r=>getStatus(r)==="critical").length;
+  const low=state.inventory.filter(r=>getStatus(r)==='low').length,critical=state.inventory.filter(r=>getStatus(r)==='critical').length;
   const possible=state.inventory.map(r=>Number(r.possibleUnits)||0).filter(v=>v>0);
-  document.getElementById("kpiTotal").textContent=state.inventory.length;
-  document.getElementById("kpiLow").textContent=low;
-  document.getElementById("kpiCritical").textContent=critical;
-  document.getElementById("kpiBuildable").textContent=possible.length?Math.min(...possible):(state.inventory.length?0:"—");
+  document.getElementById('kpiTotal').textContent=state.inventory.length;
+  document.getElementById('kpiLow').textContent=low;
+  document.getElementById('kpiCritical').textContent=critical;
+  document.getElementById('kpiBuildable').textContent=possible.length?Math.min(...possible):(state.inventory.length?0:'—');
 }
-
-// FEATURE 5: Alerts panel
 function renderAlerts(){
-  const panel=document.getElementById("dashAlertsPanel"),list=document.getElementById("dashAlertList");
-  if(!panel||!list)return;
-  const alertItems=state.inventory.filter(r=>getStatus(r)!=="healthy");
-  if(!alertItems.length){panel.style.display="none";return;}
-  panel.style.display="";
-  list.innerHTML="";
-  [...alertItems].sort((a,b)=>(getStatus(a)==="critical"?0:1)-(getStatus(b)==="critical"?0:1)).forEach(r=>{
-    const st=getStatus(r),row=document.createElement("div");
-    row.className="alert-row "+st;
-    row.innerHTML=`<div><div class="alert-name">${r.item}</div><div class="alert-detail">${st==="critical"?"Below":"Near"} reorder — ${fmt(r.remaining)} ${r.unit||"pcs"} remaining, reorder at ${fmt(r.reorder)}</div></div><span class="badge badge-${st}">${st}</span>`;
+  const panel=document.getElementById('dashAlertsPanel'),list=document.getElementById('dashAlertList');if(!panel||!list)return;
+  const alertItems=state.inventory.filter(r=>getStatus(r)!=='healthy');
+  if(!alertItems.length){panel.style.display='none';return;}
+  panel.style.display='';list.innerHTML='';
+  [...alertItems].sort((a,b)=>(getStatus(a)==='critical'?0:1)-(getStatus(b)==='critical'?0:1)).forEach(r=>{
+    const st=getStatus(r),row=document.createElement('div');row.className='alert-row '+st;
+    row.innerHTML=`<div><div class="alert-name">${r.item}</div><div class="alert-detail">${st==='critical'?'Below':'Near'} reorder — ${fmt(r.remaining)} ${r.unit||'pcs'} remaining, reorder at ${fmt(r.reorder)}</div></div><span class="badge badge-${st}">${st}</span>`;
     list.appendChild(row);
   });
 }
-
 function badgeHtml(st){return`<span class="badge badge-${st}">${st}</span>`;}
-
 function renderDash(){
-  const tbody=document.getElementById("dashTable");if(!tbody)return;tbody.innerHTML="";
-  filteredRows().forEach(r=>{const st=getStatus(r),tr=document.createElement("tr");tr.className=st==="healthy"?"":"row-"+st;
-    tr.innerHTML=`<td><b>${r.item}</b></td><td class="mono">${r.unit||"pcs"}</td><td class="mono">${fmt(r.qtyPerUnit)}</td><td class="mono">${fmt(r.used)}</td><td class="mono"><b>${fmt(r.remaining)}</b></td><td class="mono">${fmt(r.reorder)}</td><td>${badgeHtml(st)}</td><td class="mono"><b>${fmt(r.possibleUnits)}</b></td>`;
-    tbody.appendChild(tr);
-  });
+  const tbody=document.getElementById('dashTable');if(!tbody)return;tbody.innerHTML='';
+  filteredRows().forEach(r=>{const st=getStatus(r),tr=document.createElement('tr');tr.className=st==='healthy'?'':'row-'+st;
+    tr.innerHTML=`<td><b>${r.item}</b></td><td class="mono">${r.unit||'pcs'}</td><td class="mono">${fmt(r.qtyPerUnit)}</td><td class="mono">${fmt(r.used)}</td><td class="mono"><b>${fmt(r.remaining)}</b></td><td class="mono">${fmt(r.reorder)}</td><td>${badgeHtml(st)}</td><td class="mono"><b>${fmt(r.possibleUnits)}</b></td>`;
+    tbody.appendChild(tr);});
 }
-
-// FEATURE 1: Edit button in inventory table
 function renderInventory(){
-  const tbody=document.getElementById("inventoryTable");if(!tbody)return;tbody.innerHTML="";
-  state.inventory.forEach((r,i)=>{const st=getStatus(r),tr=document.createElement("tr");tr.className=st==="healthy"?"":"row-"+st;
-    tr.innerHTML=`<td><b>${r.item}</b></td><td class="mono">${r.unit||"pcs"}</td><td class="mono">${fmt(r.initial)}</td><td class="mono">${fmt(r.received)}</td><td class="mono">${fmt(r.qtyPerUnit)}</td><td class="mono">${fmt(r.unitsBuilt)}</td><td class="mono">${fmt(r.used)}</td><td class="mono"><b>${fmt(r.remaining)}</b></td><td class="mono">${fmt(r.reorder)}</td><td class="mono"><b>${fmt(r.possibleUnits)}</b></td><td>${badgeHtml(st)}</td><td style="display:flex;gap:5px"><button class="sec" style="padding:3px 9px;font-size:11px" onclick="openEditModal(${i})">Edit</button><button class="danger" style="padding:3px 9px;font-size:11px" onclick="removeItem(${i})">✕</button></td>`;
-    tbody.appendChild(tr);
-  });
+  const tbody=document.getElementById('inventoryTable');if(!tbody)return;tbody.innerHTML='';
+  state.inventory.forEach((r,i)=>{const st=getStatus(r),tr=document.createElement('tr');tr.className=st==='healthy'?'':'row-'+st;
+    tr.innerHTML=`<td><b>${r.item}</b></td><td class="mono">${r.unit||'pcs'}</td><td class="mono">${fmt(r.initial)}</td><td class="mono">${fmt(r.received)}</td><td class="mono">${fmt(r.qtyPerUnit)}</td><td class="mono">${fmt(r.unitsBuilt)}</td><td class="mono">${fmt(r.used)}</td><td class="mono"><b>${fmt(r.remaining)}</b></td><td class="mono">${fmt(r.reorder)}</td><td class="mono"><b>${fmt(r.possibleUnits)}</b></td><td>${badgeHtml(st)}</td><td style="display:flex;gap:5px"><button class="sec" style="padding:3px 9px;font-size:11px" onclick="openEditModal(${i})">Edit</button><button class="danger" style="padding:3px 9px;font-size:11px" onclick="removeItem(${i})">✕</button></td>`;
+    tbody.appendChild(tr);});
 }
-
-// FEATURE 7: Delete receiving entry with stock reversal
 function renderReceiving(){
-  const select=document.getElementById("receiveItem");if(!select)return;
-  const cur=select.value;select.innerHTML="";
-  state.inventory.forEach(r=>{const o=document.createElement("option");o.value=r.item;o.textContent=r.item;select.appendChild(o);});
-  if(cur)select.value=cur;
-  onReceiveItemChange();
-  const tbody=document.getElementById("receiveTable");if(!tbody)return;
-  tbody.innerHTML="";
+  const select=document.getElementById('receiveItem');if(!select)return;
+  const cur=select.value;select.innerHTML='';
+  state.inventory.forEach(r=>{const o=document.createElement('option');o.value=r.item;o.textContent=r.item;select.appendChild(o);});
+  if(cur)select.value=cur;onReceiveItemChange();
+  const tbody=document.getElementById('receiveTable');if(!tbody)return;tbody.innerHTML='';
   if(!state.receiving.length){tbody.innerHTML=`<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">No stock entries yet.</td></tr>`;return;}
   [...state.receiving].reverse().forEach((r,revI)=>{
     const realI=state.receiving.length-1-revI;
-    const conv=(r.inputUnit&&r.inputUnit!=="mm"&&r.inputUnit!=="pcs")?` <span class="small">(${fmt(r.inputQty)} ${r.inputUnit})</span>`:"";
-    const tr=document.createElement("tr");
-    tr.innerHTML=`<td class="mono">${r.date}</td><td>${r.item}</td><td class="mono">+${fmt(r.qty)}${conv}</td><td class="mono">${r.po||"—"}</td><td>${r.supplier||"—"}</td><td class="small">${r.notes||"—"}</td><td><button class="danger" style="padding:3px 9px;font-size:11px" onclick="deleteReceivingEntry(${realI})">✕</button></td>`;
-    tbody.appendChild(tr);
-  });
+    const conv=(r.inputUnit&&r.inputUnit!=='mm'&&r.inputUnit!=='pcs')?` <span class="small">(${fmt(r.inputQty)} ${r.inputUnit})</span>`:'';
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td class="mono">${r.date}</td><td>${r.item}</td><td class="mono">+${fmt(r.qty)}${conv}</td><td class="mono">${r.po||'—'}</td><td>${r.supplier||'—'}</td><td class="small">${r.notes||'—'}</td><td><button class="danger" style="padding:3px 9px;font-size:11px" onclick="deleteReceivingEntry(${realI})">✕</button></td>`;
+    tbody.appendChild(tr);});
 }
-
 function deleteReceivingEntry(i){
   const entry=state.receiving[i];if(!entry)return;
   if(!confirm(`Remove this entry?\n+${fmt(entry.qty)} ${entry.item} on ${entry.date}\n\nThis reverses the stock addition.`))return;
   const inv=state.inventory.find(x=>x.item===entry.item);
   if(inv)inv.received=Math.max(0,+(inv.received-entry.qty).toFixed(2));
-  state.receiving.splice(i,1);
-  computeAll();saveLocal();toast("Entry removed — stock corrected");
+  state.receiving.splice(i,1);computeAll();saveLocal();toast('Entry removed — stock corrected');
 }
-
 function renderBuildableTable(){
-  const tbody=document.getElementById("buildableTable");if(!tbody)return;
+  const tbody=document.getElementById('buildableTable');if(!tbody)return;
   const rows=[...state.inventory].filter(r=>Number(r.qtyPerUnit)>0).sort((a,b)=>(Number(a.possibleUnits)||0)-(Number(b.possibleUnits)||0));
-  tbody.innerHTML="";
+  tbody.innerHTML='';
   if(!rows.length){tbody.innerHTML=`<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">No items with Qty/Unit set.</td></tr>`;return;}
-  rows.forEach((r,i)=>{const st=getStatus(r),isB=i===0,tr=document.createElement("tr");tr.className=st==="healthy"?"":"row-"+st;
-    tr.innerHTML=`<td><b>${r.item}</b>${isB?` <span class="badge badge-critical" style="font-size:10px;margin-left:6px">bottleneck</span>`:""}</td><td class="mono">${fmt(r.remaining)} ${r.unit||"pcs"}</td><td class="mono">${fmt(r.qtyPerUnit)} ${r.unit||"pcs"}</td><td class="mono"><b style="color:${isB?"var(--critical)":"inherit"}">${fmt(r.possibleUnits)}</b></td><td>${badgeHtml(st)}</td>`;
-    tbody.appendChild(tr);
-  });
+  rows.forEach((r,i)=>{const st=getStatus(r),isB=i===0,tr=document.createElement('tr');tr.className=st==='healthy'?'':'row-'+st;
+    tr.innerHTML=`<td><b>${r.item}</b>${isB?` <span class="badge badge-critical" style="font-size:10px;margin-left:6px">bottleneck</span>`:''}</td><td class="mono">${fmt(r.remaining)} ${r.unit||'pcs'}</td><td class="mono">${fmt(r.qtyPerUnit)} ${r.unit||'pcs'}</td><td class="mono"><b style="color:${isB?'var(--critical)':'inherit'}">${fmt(r.possibleUnits)}</b></td><td>${badgeHtml(st)}</td>`;
+    tbody.appendChild(tr);});
 }
-
 function renderBuildHistory(){
-  const tbody=document.getElementById("buildTable");if(!tbody)return;tbody.innerHTML="";
+  const tbody=document.getElementById('buildTable');if(!tbody)return;tbody.innerHTML='';
   if(!state.buildLog.length){tbody.innerHTML=`<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:14px">No units built yet.</td></tr>`;return;}
-  [...state.buildLog].reverse().forEach((r,i)=>{const realI=state.buildLog.length-1-i,tr=document.createElement("tr");
-    tr.innerHTML=`<td>${r.date}</td><td class="mono"><b>Unit ${r.unitId||"—"}</b></td><td><button class="danger" style="padding:3px 9px;font-size:11px" onclick="removeBuildLog(${realI})">✕</button></td>`;
-    tbody.appendChild(tr);
-  });
+  [...state.buildLog].reverse().forEach((r,i)=>{const realI=state.buildLog.length-1-i,tr=document.createElement('tr');
+    tr.innerHTML=`<td>${r.date}</td><td class="mono"><b>Unit ${r.unitId||'—'}</b></td><td><button class="danger" style="padding:3px 9px;font-size:11px" onclick="removeBuildLog(${realI})">✕</button></td>`;
+    tbody.appendChild(tr);});
 }
-
-// FEATURE 4: Unit filter
-let _unitFilter="all";
-function setUnitFilter(f,btn){_unitFilter=f;document.querySelectorAll(".uf-btn").forEach(b=>b.classList.remove("active"));btn.classList.add("active");renderBatteryUnits();}
-
+let _unitFilter='all';
+function setUnitFilter(f,btn){_unitFilter=f;document.querySelectorAll('.uf-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');renderBatteryUnits();}
 function renderBatteryUnits(){
-  const wrap=document.getElementById("batteryCards");if(!wrap)return;
-  const filtered=_unitFilter==="all"?state.batteryUnits:state.batteryUnits.filter(u=>(u.status||"Assembly")===_unitFilter);
-  const countEl=document.getElementById("unitCount");
-  if(countEl)countEl.textContent=`${filtered.length} of ${state.batteryUnits.length} units`;
-  wrap.innerHTML="";
+  const wrap=document.getElementById('batteryCards');if(!wrap)return;
+  const filtered=_unitFilter==='all'?state.batteryUnits:state.batteryUnits.filter(u=>(u.status||'Assembly')===_unitFilter);
+  const countEl=document.getElementById('unitCount');if(countEl)countEl.textContent=`${filtered.length} of ${state.batteryUnits.length} units`;
+  wrap.innerHTML='';
   if(!filtered.length){wrap.innerHTML=`<div class="small" style="grid-column:1/-1;padding:24px;text-align:center">No units match this filter.</div>`;return;}
   filtered.forEach(unit=>{
-    const card=document.createElement("div"),selected=unit.id===state.selectedBatteryUnitId;
-    card.className="unit-card"+(selected?" selected":"");
-    const statusPills=UNIT_STATUSES.map(s=>{const isCur=s===(unit.status||"Assembly"),c=statusColor(s);
-      return`<span class="status-dot ${isCur?"cur":""}" style="${isCur?`background:${c.bg};color:${c.color};border:1px solid ${c.border}`:""}" onclick="event.stopPropagation();quickSetStatus('${unit.id}','${s}')">${s}</span>`;
-    }).join("");
+    const card=document.createElement('div'),selected=unit.id===state.selectedBatteryUnitId;
+    card.className='unit-card'+(selected?' selected':'');
+    const statusPills=UNIT_STATUSES.map(s=>{const isCur=s===(unit.status||'Assembly'),c=statusColor(s);
+      return`<span class="status-dot ${isCur?'cur':''}" style="${isCur?`background:${c.bg};color:${c.color};border:1px solid ${c.border}`:''}" onclick="event.stopPropagation();quickSetStatus('${unit.id}','${s}')">${s}</span>`;
+    }).join('');
     card.onclick=()=>loadBatteryUnit(unit.id);
-    card.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px"><div style="font-size:15px;font-weight:600;letter-spacing:-.2px">Unit · ${unit.id}</div><span class="mono" style="font-size:11px;color:var(--faint)">${unit.date||""}</span></div><div class="mono small" style="margin-bottom:2px">${unit.ip||"—"}</div><div class="small" style="margin-bottom:10px;color:var(--faint)">${unit.serial||"—"}</div><div class="status-update">${statusPills}</div>`;
-    wrap.appendChild(card);
-  });
+    card.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px"><div style="font-size:15px;font-weight:600;letter-spacing:-.2px">Unit · ${unit.id}</div><span class="mono" style="font-size:11px;color:var(--faint)">${unit.date||''}</span></div><div class="mono small" style="margin-bottom:2px">${unit.ip||'—'}</div><div class="small" style="margin-bottom:10px;color:var(--faint)">${unit.serial||'—'}</div><div class="status-update">${statusPills}</div>`;
+    wrap.appendChild(card);});
 }
-
 function quickSetStatus(unitId,newStatus){
   const idx=state.batteryUnits.findIndex(x=>x.id===unitId);if(idx<0)return;
   state.batteryUnits[idx].status=newStatus;
-  if(state.selectedBatteryUnitId===unitId){document.getElementById("unitStatus").value=newStatus;renderStatusPills(newStatus);}
+  if(state.selectedBatteryUnitId===unitId){document.getElementById('unitStatus').value=newStatus;renderStatusPills(newStatus);}
   saveLocal();renderBatteryUnits();toast(`Unit ${unitId} → ${newStatus} ✓`);
 }
 
-// Conversion
 const MM_PER_FT=304.8,MM_PER_IN=25.4;
-function toMM(value,type){const n=Number(value)||0;if(type==="ft")return+(n*MM_PER_FT).toFixed(2);if(type==="in")return+(n*MM_PER_IN).toFixed(2);return n;}
-
+function toMM(value,type){const n=Number(value)||0;if(type==='ft')return+(n*MM_PER_FT).toFixed(2);if(type==='in')return+(n*MM_PER_IN).toFixed(2);return n;}
 function onMeasureChange(){
-  const m=document.getElementById("newItemMeasure").value;
-  document.getElementById("newItemInitialUnit").textContent=m==="pcs"?"(pcs)":`(${m})`;
-  document.getElementById("newItemQpuUnit").textContent=m==="pcs"?"(pcs)":`(${m})`;
-  const hint=document.getElementById("convertHint"),iv=Number(document.getElementById("newItemInitial").value)||0,qv=Number(document.getElementById("newItemQtyPerUnit").value)||0;
-  if((m==="ft"||m==="in")&&(iv||qv)){const p=[];if(iv)p.push(`Initial: ${iv} ${m} → <b>${fmt(toMM(iv,m))} mm</b>`);if(qv)p.push(`Qty/Unit: ${qv} ${m} → <b>${fmt(toMM(qv,m))} mm</b>`);hint.innerHTML="⟳ "+p.join("  ·  ");hint.style.display="";}
-  else hint.style.display="none";
+  const m=document.getElementById('newItemMeasure').value;
+  document.getElementById('newItemInitialUnit').textContent=m==='pcs'?'(pcs)':`(${m})`;
+  document.getElementById('newItemQpuUnit').textContent=m==='pcs'?'(pcs)':`(${m})`;
+  const hint=document.getElementById('convertHint'),iv=Number(document.getElementById('newItemInitial').value)||0,qv=Number(document.getElementById('newItemQtyPerUnit').value)||0;
+  if((m==='ft'||m==='in')&&(iv||qv)){const p=[];if(iv)p.push(`Initial: ${iv} ${m} → <b>${fmt(toMM(iv,m))} mm</b>`);if(qv)p.push(`Qty/Unit: ${qv} ${m} → <b>${fmt(toMM(qv,m))} mm</b>`);hint.innerHTML='⟳ '+p.join('  ·  ');hint.style.display='';}
+  else hint.style.display='none';
 }
-
-// FEATURE 1: Edit modal
 let _editIndex=-1;
-function openEditModal(i){_editIndex=i;const r=state.inventory[i];document.getElementById("editModalName").textContent=r.item;document.getElementById("editInitial").value=r.initial;document.getElementById("editQtyPerUnit").value=r.qtyPerUnit;document.getElementById("editReorder").value=r.reorder;document.getElementById("editUnitLabel").textContent=r.unit||"pcs";document.getElementById("editModal").classList.remove("hidden");}
-function closeEditModal(){document.getElementById("editModal").classList.add("hidden");_editIndex=-1;}
-function saveEditItem(){if(_editIndex<0)return;const r=state.inventory[_editIndex];r.initial=Number(document.getElementById("editInitial").value)||0;r.qtyPerUnit=Number(document.getElementById("editQtyPerUnit").value)||0;r.reorder=Number(document.getElementById("editReorder").value)||0;closeEditModal();computeAll();saveLocal();toast(`${r.item} updated ✓`);}
-document.getElementById("editModal").addEventListener("click",function(e){if(e.target===this)closeEditModal();});
-
+function openEditModal(i){_editIndex=i;const r=state.inventory[i];document.getElementById('editModalName').textContent=r.item;document.getElementById('editInitial').value=r.initial;document.getElementById('editQtyPerUnit').value=r.qtyPerUnit;document.getElementById('editReorder').value=r.reorder;document.getElementById('editUnitLabel').textContent=r.unit||'pcs';document.getElementById('editModal').classList.remove('hidden');}
+function closeEditModal(){document.getElementById('editModal').classList.add('hidden');_editIndex=-1;}
+function saveEditItem(){if(_editIndex<0)return;const r=state.inventory[_editIndex];r.initial=Number(document.getElementById('editInitial').value)||0;r.qtyPerUnit=Number(document.getElementById('editQtyPerUnit').value)||0;r.reorder=Number(document.getElementById('editReorder').value)||0;closeEditModal();computeAll();saveLocal();toast(`${r.item} updated ✓`);}
+document.getElementById('editModal').addEventListener('click',function(e){if(e.target===this)closeEditModal();});
 function addItem(){
-  const name=document.getElementById("newItemName").value.trim();if(!name){toast("Enter an item name");return;}
-  if(state.inventory.find(x=>x.item.toLowerCase()===name.toLowerCase())){toast("Item already exists");return;}
-  const m=document.getElementById("newItemMeasure").value,unit=m==="pcs"?"pcs":"mm";
-  state.inventory.push({item:name,unit,initial:toMM(document.getElementById("newItemInitial").value,m),received:0,qtyPerUnit:toMM(document.getElementById("newItemQtyPerUnit").value,m),reorder:toMM(document.getElementById("newItemReorder").value,m)});
+  const name=document.getElementById('newItemName').value.trim();if(!name){toast('Enter an item name');return;}
+  if(state.inventory.find(x=>x.item.toLowerCase()===name.toLowerCase())){toast('Item already exists');return;}
+  const m=document.getElementById('newItemMeasure').value,unit=m==='pcs'?'pcs':'mm';
+  state.inventory.push({item:name,unit,initial:toMM(document.getElementById('newItemInitial').value,m),received:0,qtyPerUnit:toMM(document.getElementById('newItemQtyPerUnit').value,m),reorder:toMM(document.getElementById('newItemReorder').value,m)});
   computeAll();saveLocal();
-  ["newItemName","newItemInitial","newItemQtyPerUnit","newItemReorder"].forEach(id=>document.getElementById(id).value="");
-  document.getElementById("newItemMeasure").value="pcs";document.getElementById("convertHint").style.display="none";onMeasureChange();
-  toast(`${name} added ✓${(m==="ft"||m==="in")?" (converted to mm)":""}`);
+  ['newItemName','newItemInitial','newItemQtyPerUnit','newItemReorder'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('newItemMeasure').value='pcs';document.getElementById('convertHint').style.display='none';onMeasureChange();
+  toast(`${name} added ✓${(m==='ft'||m==='in')?' (converted to mm)':''}`);
 }
-function removeItem(i){if(!confirm(`Remove "${state.inventory[i].item}"?`))return;state.inventory.splice(i,1);computeAll();saveLocal();toast("Item removed");}
-function removeBuildLog(i){if(!confirm("Remove build entry? Inventory recalculates."))return;state.buildLog.splice(i,1);computeAll();saveLocal();toast("Build entry removed");}
-
-// FEATURE 2 & 6: Restock with shopping list + CSV export
+function removeItem(i){if(!confirm(`Remove "${state.inventory[i].item}"?`))return;state.inventory.splice(i,1);computeAll();saveLocal();toast('Item removed');}
+function removeBuildLog(i){if(!confirm('Remove build entry? Inventory recalculates.'))return;state.buildLog.splice(i,1);computeAll();saveLocal();toast('Build entry removed');}
 function calculateRestock(){
-  const units=Number(document.getElementById("restockUnits")?.value),el=document.getElementById("restockResult"),summaryEl=document.getElementById("restockSummary"),exportBtn=document.getElementById("exportRestockBtn");
+  const units=Number(document.getElementById('restockUnits')?.value),el=document.getElementById('restockResult'),summaryEl=document.getElementById('restockSummary'),exportBtn=document.getElementById('exportRestockBtn');
   if(!el)return;
-  if(!units||units<1){el.innerHTML="";if(summaryEl)summaryEl.style.display="none";if(exportBtn)exportBtn.style.display="none";return;}
+  if(!units||units<1){el.innerHTML='';if(summaryEl)summaryEl.style.display='none';if(exportBtn)exportBtn.style.display='none';return;}
   const rows=state.inventory.filter(r=>r.qtyPerUnit>0);
   if(!rows.length){el.innerHTML=`<div class="small">No items with Qty/Unit defined.</div>`;return;}
-  let shortCount=0;const shortList=[];let html="";
+  let shortCount=0;const shortList=[];let html='';
   rows.forEach(r=>{
     const required=+(r.qtyPerUnit*units).toFixed(2),available=Number(r.remaining),short=available<required;
-    if(short){shortCount++;shortList.push({item:r.item,need:+(required-available).toFixed(2),unit:r.unit||"pcs"});}
-    html+=`<div class="restock-item ${short?"short":"ok"}"><div><div style="font-weight:600;font-size:13px">${r.item}</div><div class="small">Need: <span class="mono">${fmt(required)} ${r.unit||"pcs"}</span> · Have: <span class="mono">${fmt(available)} ${r.unit||"pcs"}</span></div></div><div>${short?`<span class="badge badge-missing">ORDER ${fmt(required-available>0?+(required-available).toFixed(2):0)} ${r.unit||"pcs"}</span>`:`<span class="badge badge-ok">✓ OK</span>`}</div></div>`;
+    if(short){shortCount++;shortList.push({item:r.item,need:+(required-available).toFixed(2),unit:r.unit||'pcs'});}
+    html+=`<div class="restock-item ${short?'short':'ok'}"><div><div style="font-weight:600;font-size:13px">${r.item}</div><div class="small">Need: <span class="mono">${fmt(required)} ${r.unit||'pcs'}</span> · Have: <span class="mono">${fmt(available)} ${r.unit||'pcs'}</span></div></div><div>${short?`<span class="badge badge-missing">ORDER ${fmt(+(required-available).toFixed(2))} ${r.unit||'pcs'}</span>`:`<span class="badge badge-ok">✓ OK</span>`}</div></div>`;
   });
   if(summaryEl){
-    summaryEl.style.display="";
-    if(shortCount>0){summaryEl.style.cssText="display:block;margin-bottom:12px;padding:10px 14px;border-radius:8px;font-size:13px;background:var(--critical-bg);border:1px solid rgba(224,92,75,.2)";summaryEl.innerHTML=`<b style="color:var(--critical)">⚠ ${shortCount} item${shortCount>1?"s":""} need ordering</b> to build ${units} unit${units>1?"s":""}.<br><span class="small">Order: ${shortList.map(x=>`${fmt(x.need)} ${x.unit} of <b>${x.item}</b>`).join(" · ")}</span>`;}
-    else{summaryEl.style.cssText="display:block;margin-bottom:12px;padding:10px 14px;border-radius:8px;font-size:13px;background:var(--ok-bg);border:1px solid rgba(90,170,122,.2)";summaryEl.innerHTML=`<b style="color:var(--ok)">✓ All items in stock</b> — you can build ${units} unit${units>1?"s":""} right now!`;}
+    summaryEl.style.display='';
+    if(shortCount>0){summaryEl.style.cssText='display:block;margin-bottom:12px;padding:10px 14px;border-radius:8px;font-size:13px;background:var(--critical-bg);border:1px solid rgba(224,92,75,.2)';summaryEl.innerHTML=`<b style="color:var(--critical)">⚠ ${shortCount} item${shortCount>1?'s':''} need ordering</b> to build ${units} unit${units>1?'s':''}.<br><span class="small">Order: ${shortList.map(x=>`${fmt(x.need)} ${x.unit} of <b>${x.item}</b>`).join(' · ')}</span>`;}
+    else{summaryEl.style.cssText='display:block;margin-bottom:12px;padding:10px 14px;border-radius:8px;font-size:13px;background:var(--ok-bg);border:1px solid rgba(90,170,122,.2)';summaryEl.innerHTML=`<b style="color:var(--ok)">✓ All items in stock</b> — you can build ${units} unit${units>1?'s':''} right now!`;}
   }
-  if(exportBtn)exportBtn.style.display="";
-  el.innerHTML=html;
+  if(exportBtn)exportBtn.style.display='';el.innerHTML=html;
 }
-
 function exportRestockList(){
-  const units=Number(document.getElementById("restockUnits")?.value);if(!units)return;
+  const units=Number(document.getElementById('restockUnits')?.value);if(!units)return;
   const lines=[`K2 Inventory — Shopping List`,`Generated: ${new Date().toLocaleString()}`,`Target: ${units} unit(s)`,``,`Item,Unit,Need,Have,Order Qty,Status`];
-  state.inventory.filter(r=>r.qtyPerUnit>0).forEach(r=>{const req=+(r.qtyPerUnit*units).toFixed(2),avail=Number(r.remaining),short=avail<req;lines.push(`"${r.item}",${r.unit||"pcs"},${req},${avail},${short?+(req-avail).toFixed(2):0},${short?"ORDER":"OK"}`);});
-  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"}));a.download=`k2_shopping_list_${units}units_${new Date().toISOString().slice(0,10)}.csv`;a.click();toast("Shopping list exported ✓");
+  state.inventory.filter(r=>r.qtyPerUnit>0).forEach(r=>{const req=+(r.qtyPerUnit*units).toFixed(2),avail=Number(r.remaining),short=avail<req;lines.push(`"${r.item}",${r.unit||'pcs'},${req},${avail},${short?+(req-avail).toFixed(2):0},${short?'ORDER':'OK'}`);});
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/csv'}));a.download=`k2_shopping_list_${units}units_${new Date().toISOString().slice(0,10)}.csv`;a.click();toast('Shopping list exported ✓');
 }
-
-// FEATURE 3: PO/supplier/notes in addStock
 function onReceiveItemChange(){
-  const itemName=document.getElementById("receiveItem").value,inv=state.inventory.find(x=>x.item===itemName),isMM=inv&&inv.unit==="mm";
-  document.getElementById("receiveUnitWrap").style.display=isMM?"":"none";
-  document.getElementById("receiveConvertHint").style.display="none";
-  const helper=document.getElementById("receiveHelperText");
-  if(helper){if(isMM)helper.innerHTML=`<b style="color:var(--ok)">${itemName}</b> stored in <b>mm</b> — enter in mm, ft, or inches.`;else if(inv)helper.innerHTML=`<b style="color:var(--accent2)">${itemName}</b> stored in <b>pcs</b> — enter pieces received.`;else helper.textContent="Select an item to log received stock.";}
+  const itemName=document.getElementById('receiveItem').value,inv=state.inventory.find(x=>x.item===itemName),isMM=inv&&inv.unit==='mm';
+  document.getElementById('receiveUnitWrap').style.display=isMM?'':'none';document.getElementById('receiveConvertHint').style.display='none';
+  const helper=document.getElementById('receiveHelperText');
+  if(helper){if(isMM)helper.innerHTML=`<b style="color:var(--ok)">${itemName}</b> stored in <b>mm</b> — enter in mm, ft, or inches.`;else if(inv)helper.innerHTML=`<b style="color:var(--accent2)">${itemName}</b> stored in <b>pcs</b> — enter pieces received.`;else helper.textContent='Select an item to log received stock.';}
   onReceiveQtyInput();
 }
 function onReceiveQtyInput(){
-  const itemName=document.getElementById("receiveItem").value,inv=state.inventory.find(x=>x.item===itemName);
-  if(!inv||inv.unit!=="mm"){document.getElementById("receiveConvertHint").style.display="none";return;}
-  const qty=Number(document.getElementById("receiveQty").value)||0,unit=document.getElementById("receiveUnit")?.value||"mm",hint=document.getElementById("receiveConvertHint");
-  if(qty&&unit!=="mm"){hint.innerHTML=`${qty} ${unit} = <b>${fmt(toMM(qty,unit))} mm</b> will be added`;hint.style.display="";}
-  else if(qty){hint.innerHTML=`<b>${fmt(qty)} mm</b> will be added`;hint.style.display="";}
-  else hint.style.display="none";
+  const itemName=document.getElementById('receiveItem').value,inv=state.inventory.find(x=>x.item===itemName);
+  if(!inv||inv.unit!=='mm'){document.getElementById('receiveConvertHint').style.display='none';return;}
+  const qty=Number(document.getElementById('receiveQty').value)||0,unit=document.getElementById('receiveUnit')?.value||'mm',hint=document.getElementById('receiveConvertHint');
+  if(qty&&unit!=='mm'){hint.innerHTML=`${qty} ${unit} = <b>${fmt(toMM(qty,unit))} mm</b> will be added`;hint.style.display='';}
+  else if(qty){hint.innerHTML=`<b>${fmt(qty)} mm</b> will be added`;hint.style.display='';}
+  else hint.style.display='none';
 }
 function addStock(){
-  const item=document.getElementById("receiveItem").value,rawQty=Number(document.getElementById("receiveQty").value),date=document.getElementById("receiveDate").value||new Date().toLocaleDateString();
-  if(!item||!rawQty||rawQty<=0){toast("Select item and enter quantity");return;}
-  const inv=state.inventory.find(x=>x.item===item),isMM=inv&&inv.unit==="mm",inputUnit=isMM?(document.getElementById("receiveUnit")?.value||"mm"):"pcs",qty=isMM?toMM(rawQty,inputUnit):rawQty;
+  const item=document.getElementById('receiveItem').value,rawQty=Number(document.getElementById('receiveQty').value),date=document.getElementById('receiveDate').value||new Date().toLocaleDateString();
+  if(!item||!rawQty||rawQty<=0){toast('Select item and enter quantity');return;}
+  const inv=state.inventory.find(x=>x.item===item),isMM=inv&&inv.unit==='mm',inputUnit=isMM?(document.getElementById('receiveUnit')?.value||'mm'):'pcs',qty=isMM?toMM(rawQty,inputUnit):rawQty;
   if(inv)inv.received=+(inv.received+qty).toFixed(2);
-  state.receiving.push({date,item,qty,inputQty:rawQty,inputUnit,po:document.getElementById("receivePO")?.value.trim()||"",supplier:document.getElementById("receiveSupplier")?.value.trim()||"",notes:document.getElementById("receiveNotes")?.value.trim()||""});
+  state.receiving.push({date,item,qty,inputQty:rawQty,inputUnit,po:document.getElementById('receivePO')?.value.trim()||'',supplier:document.getElementById('receiveSupplier')?.value.trim()||'',notes:document.getElementById('receiveNotes')?.value.trim()||''});
   computeAll();saveLocal();
-  ["receiveQty","receivePO","receiveSupplier","receiveNotes"].forEach(id=>{const el=document.getElementById(id);if(el)el.value="";});
-  document.getElementById("receiveConvertHint").style.display="none";
-  toast(`+${fmt(qty)} ${isMM&&inputUnit!=="mm"?`(${rawQty} ${inputUnit} → mm) `:""}added to ${item} ✓`);
+  ['receiveQty','receivePO','receiveSupplier','receiveNotes'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('receiveConvertHint').style.display='none';
+  toast(`+${fmt(qty)} ${isMM&&inputUnit!=='mm'?`(${rawQty} ${inputUnit} → mm) `:''}added to ${item} ✓`);
 }
-
-// Battery units
-const UNIT_STATUSES=["Assembly","In QC","Ready to Ship","Shipped","Returned/Refurbished"];
+const UNIT_STATUSES=['Assembly','In QC','Ready to Ship','Shipped','Returned/Refurbished'];
 function statusColor(s){
-  if(s==="Assembly")return{bg:"rgba(61,127,255,.15)",color:"#7ab0ff",border:"rgba(61,127,255,.4)"};
-  if(s==="In QC")return{bg:"rgba(212,168,67,.12)",color:"#d4a843",border:"rgba(212,168,67,.35)"};
-  if(s==="Ready to Ship")return{bg:"rgba(90,170,122,.12)",color:"#5aaa7a",border:"rgba(90,170,122,.35)"};
-  if(s==="Shipped")return{bg:"rgba(120,80,220,.15)",color:"#a080ff",border:"rgba(120,80,220,.4)"};
-  if(s==="Returned/Refurbished")return{bg:"rgba(224,92,75,.12)",color:"#e05c4b",border:"rgba(224,92,75,.35)"};
-  return{bg:"rgba(255,255,255,.06)",color:"var(--muted)",border:"var(--line)"};
+  if(s==='Assembly')return{bg:'rgba(61,127,255,.15)',color:'#7ab0ff',border:'rgba(61,127,255,.4)'};
+  if(s==='In QC')return{bg:'rgba(212,168,67,.12)',color:'#d4a843',border:'rgba(212,168,67,.35)'};
+  if(s==='Ready to Ship')return{bg:'rgba(90,170,122,.12)',color:'#5aaa7a',border:'rgba(90,170,122,.35)'};
+  if(s==='Shipped')return{bg:'rgba(120,80,220,.15)',color:'#a080ff',border:'rgba(120,80,220,.4)'};
+  if(s==='Returned/Refurbished')return{bg:'rgba(224,92,75,.12)',color:'#e05c4b',border:'rgba(224,92,75,.35)'};
+  return{bg:'rgba(255,255,255,.06)',color:'var(--muted)',border:'var(--line)'};
 }
 function renderStatusPills(cur){
-  const wrap=document.getElementById("unitStatusPills");if(!wrap)return;wrap.innerHTML="";
-  UNIT_STATUSES.forEach(s=>{const btn=document.createElement("button");btn.className="status-pill-btn";btn.textContent=s;const c=statusColor(s);if(s===cur)btn.style.cssText=`background:${c.bg};color:${c.color};border-color:${c.border}`;btn.onclick=()=>{document.getElementById("unitStatus").value=s;renderStatusPills(s);};wrap.appendChild(btn);});
+  const wrap=document.getElementById('unitStatusPills');if(!wrap)return;wrap.innerHTML='';
+  UNIT_STATUSES.forEach(s=>{const btn=document.createElement('button');btn.className='status-pill-btn';btn.textContent=s;const c=statusColor(s);if(s===cur)btn.style.cssText=`background:${c.bg};color:${c.color};border-color:${c.border}`;btn.onclick=()=>{document.getElementById('unitStatus').value=s;renderStatusPills(s);};wrap.appendChild(btn);});
 }
 function updateConsumeNotice(isNew){
-  const notice=document.getElementById("buildConsumeNotice"),list=document.getElementById("buildConsumeList");if(!notice||!list)return;
-  if(!isNew){notice.style.display="none";return;}
-  const items=state.inventory.filter(r=>Number(r.qtyPerUnit)>0);if(!items.length){notice.style.display="none";return;}
-  notice.style.display="";
-  list.textContent=`${items.length} item${items.length>1?"s":""} will be deducted.`;
+  const notice=document.getElementById('buildConsumeNotice'),list=document.getElementById('buildConsumeList');if(!notice||!list)return;
+  if(!isNew){notice.style.display='none';return;}
+  const items=state.inventory.filter(r=>Number(r.qtyPerUnit)>0);if(!items.length){notice.style.display='none';return;}
+  notice.style.display='';list.textContent=`${items.length} item${items.length>1?'s':''} will be deducted.`;
 }
 function newBatteryUnit(){
   state.selectedBatteryUnitId=null;
-  ["unitDate","unitId","unitIp","unitSerial"].forEach(id=>document.getElementById(id).value="");
-  document.getElementById("unitDate").valueAsDate=new Date();document.getElementById("unitStatus").value="Assembly";
-  renderStatusPills("Assembly");document.getElementById("deleteUnitBtn").style.display="none";
-  document.getElementById("unitEditHint").innerHTML="Fill in details and click Save. Saving a <b>new</b> unit deducts 1 unit from inventory.";
+  ['unitDate','unitId','unitIp','unitSerial'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('unitDate').valueAsDate=new Date();document.getElementById('unitStatus').value='Assembly';
+  renderStatusPills('Assembly');document.getElementById('deleteUnitBtn').style.display='none';
+  document.getElementById('unitEditHint').innerHTML='Fill in details and click Save. Saving a <b>new</b> unit deducts 1 unit from inventory.';
   updateConsumeNotice(true);renderBatteryUnits();
 }
 function saveBatteryUnit(){
-  const id=document.getElementById("unitId").value.trim();if(!id){toast("Enter a Unit ID");return;}
-  const isNew=!state.batteryUnits.find(x=>x.id===id),status=document.getElementById("unitStatus").value||"Assembly";
+  const id=document.getElementById('unitId').value.trim();if(!id){toast('Enter a Unit ID');return;}
+  const isNew=!state.batteryUnits.find(x=>x.id===id),status=document.getElementById('unitStatus').value||'Assembly';
   if(isNew){
     const built=state.buildLog.reduce((s,r)=>s+(Number(r.unitsBuilt)||0),0);
     const shortItems=state.inventory.filter(r=>{const qpu=Number(r.qtyPerUnit)||0;if(!qpu)return false;return(Number(r.initial)||0)+(Number(r.received)||0)-qpu*(built+1)<0;});
-    if(shortItems.length&&!confirm(`⚠️ These will go negative:\n${shortItems.map(r=>r.item).join(", ")}\n\nProceed?`))return;
-    state.buildLog.push({date:document.getElementById("unitDate").value||new Date().toLocaleDateString(),unitsBuilt:1,unitId:id});
-    state.batteryUnits.push({id,date:document.getElementById("unitDate").value,ip:document.getElementById("unitIp").value.trim(),serial:document.getElementById("unitSerial").value.trim(),status});
+    if(shortItems.length&&!confirm(`⚠️ These will go negative:\n${shortItems.map(r=>r.item).join(', ')}\n\nProceed?`))return;
+    state.buildLog.push({date:document.getElementById('unitDate').value||new Date().toLocaleDateString(),unitsBuilt:1,unitId:id});
+    state.batteryUnits.push({id,date:document.getElementById('unitDate').value,ip:document.getElementById('unitIp').value.trim(),serial:document.getElementById('unitSerial').value.trim(),status});
     toast(`Unit ${id} built & saved — inventory updated ✓`);
   } else {
     const idx=state.batteryUnits.findIndex(x=>x.id===id);
-    state.batteryUnits[idx]={...state.batteryUnits[idx],date:document.getElementById("unitDate").value,ip:document.getElementById("unitIp").value.trim(),serial:document.getElementById("unitSerial").value.trim(),status};
+    state.batteryUnits[idx]={...state.batteryUnits[idx],date:document.getElementById('unitDate').value,ip:document.getElementById('unitIp').value.trim(),serial:document.getElementById('unitSerial').value.trim(),status};
     toast(`Unit ${id} → ${status} ✓`);
   }
-  state.selectedBatteryUnitId=id;document.getElementById("deleteUnitBtn").style.display="";
-  document.getElementById("unitEditHint").textContent=`Editing unit ${id} — status updates don't affect inventory`;
-  document.getElementById("buildConsumeNotice").style.display="none";
+  state.selectedBatteryUnitId=id;document.getElementById('deleteUnitBtn').style.display='';
+  document.getElementById('unitEditHint').textContent=`Editing unit ${id} — status updates don't affect inventory`;
+  document.getElementById('buildConsumeNotice').style.display='none';
   computeAll();saveLocal();renderBatteryUnits();
 }
 function loadBatteryUnit(id){
   const unit=state.batteryUnits.find(x=>x.id===id);if(!unit)return;
   state.selectedBatteryUnitId=id;
-  document.getElementById("unitDate").value=unit.date||"";document.getElementById("unitId").value=unit.id||"";
-  document.getElementById("unitIp").value=unit.ip||"";document.getElementById("unitSerial").value=unit.serial||"";
-  document.getElementById("unitStatus").value=unit.status||"Assembly";renderStatusPills(unit.status||"Assembly");
-  document.getElementById("deleteUnitBtn").style.display="";
-  document.getElementById("unitEditHint").textContent=`Editing unit ${id} — status updates don't affect inventory`;
-  document.getElementById("buildConsumeNotice").style.display="none";renderBatteryUnits();
+  document.getElementById('unitDate').value=unit.date||'';document.getElementById('unitId').value=unit.id||'';
+  document.getElementById('unitIp').value=unit.ip||'';document.getElementById('unitSerial').value=unit.serial||'';
+  document.getElementById('unitStatus').value=unit.status||'Assembly';renderStatusPills(unit.status||'Assembly');
+  document.getElementById('deleteUnitBtn').style.display='';
+  document.getElementById('unitEditHint').textContent=`Editing unit ${id} — status updates don't affect inventory`;
+  document.getElementById('buildConsumeNotice').style.display='none';renderBatteryUnits();
 }
 function deleteUnit(){
   const id=state.selectedBatteryUnitId;if(!id||!confirm(`Delete unit ${id}?`))return;
   state.batteryUnits=state.batteryUnits.filter(x=>x.id!==id);state.buildLog=state.buildLog.filter(x=>x.unitId!==id);
   state.selectedBatteryUnitId=null;computeAll();saveLocal();newBatteryUnit();toast(`Unit ${id} deleted — inventory restored`);
 }
-
-// Excel import
-function firstValue(obj,keys,fallback=""){for(const k of keys){if(obj[k]!==undefined&&obj[k]!==null&&String(obj[k]).trim()!=="")return obj[k];}return fallback;}
-function parseMeasure(value){if(value===null||value===undefined||value==="")return{unit:"pcs",qty:0,mm:0};if(typeof value==="number")return{unit:"pcs",qty:Number(value)||0,mm:0};const s=String(value).trim();const pMM=s.match(/\(([\d.]+)\s*mm\)/i);if(pMM){const mm=parseFloat(pMM[1])||0;return{unit:"mm",qty:mm,mm};}const mmM=s.match(/([\d.]+)\s*mm\b/i);if(mmM){const v=parseFloat(mmM[1])||0;return{unit:"mm",qty:v,mm:v};}const ftM=s.match(/([\d.]+)\s*(ft|feet|foot)\b/i);if(ftM){const v=parseFloat(ftM[1])||0;return{unit:"mm",qty:v,mm:+(v*304.8).toFixed(2)};}const inM=s.match(/([\d.]+)\s*(in|inch|inches)\b/i);if(inM){const v=parseFloat(inM[1])||0;return{unit:"mm",qty:v,mm:+(v*25.4).toFixed(2)};}const n=parseFloat(s);return{unit:"pcs",qty:isNaN(n)?0:n,mm:0};}
+function firstValue(obj,keys,fallback=''){for(const k of keys){if(obj[k]!==undefined&&obj[k]!==null&&String(obj[k]).trim()!=='')return obj[k];}return fallback;}
+function parseMeasure(value){if(value===null||value===undefined||value==='')return{unit:'pcs',qty:0,mm:0};if(typeof value==='number')return{unit:'pcs',qty:Number(value)||0,mm:0};const s=String(value).trim();const pMM=s.match(/\(([\d.]+)\s*mm\)/i);if(pMM){const mm=parseFloat(pMM[1])||0;return{unit:'mm',qty:mm,mm};}const mmM=s.match(/([\d.]+)\s*mm\b/i);if(mmM){const v=parseFloat(mmM[1])||0;return{unit:'mm',qty:v,mm:v};}const ftM=s.match(/([\d.]+)\s*(ft|feet|foot)\b/i);if(ftM){const v=parseFloat(ftM[1])||0;return{unit:'mm',qty:v,mm:+(v*304.8).toFixed(2)};}const inM=s.match(/([\d.]+)\s*(in|inch|inches)\b/i);if(inM){const v=parseFloat(inM[1])||0;return{unit:'mm',qty:v,mm:+(v*25.4).toFixed(2)};}const n=parseFloat(s);return{unit:'pcs',qty:isNaN(n)?0:n,mm:0};}
 async function importExcel(){
-  const file=document.getElementById("file").files[0];if(!file){toast("Select an Excel file first");return;}
-  const data=await file.arrayBuffer(),wb=XLSX.read(data,{type:"array"});
-  const invSheet=wb.Sheets["Inventory"]||wb.Sheets[wb.SheetNames[0]],invJson=XLSX.utils.sheet_to_json(invSheet,{defval:""});
-  const bomMap={};const bomSheet=wb.Sheets["BOM"];
-  if(bomSheet){XLSX.utils.sheet_to_json(bomSheet,{defval:""}).filter(r=>String(firstValue(r,["Item","Part Name","item"],"")).trim()).forEach(r=>{const item=String(firstValue(r,["Item","Part Name","item"],"")).trim().toLowerCase(),raw=firstValue(r,["Qty per Unit","Pieces Per Unit","qty per unit"],"");bomMap[item]=parseMeasure(raw);});}
-  const imported=invJson.filter(r=>String(firstValue(r,["Item","item"],"")).trim()).map(r=>{
-    const name=String(firstValue(r,["Item","item"],"")).trim(),bom=bomMap[name.toLowerCase()];
-    let unit=String(firstValue(r,["Unit (pcs/mm)","Unit","unit"],"pcs")).trim().toLowerCase()||"pcs";
-    let qtyPerUnit=Number(firstValue(r,["Qty per Unit (Auto)","Qty per Unit","qtyPerUnit"],0))||0;
-    if(bom){if(bom.unit==="mm"&&bom.mm>0){qtyPerUnit=bom.mm;unit="mm";}else if(bom.qty>0){qtyPerUnit=bom.qty;}}
-    return{item:name,unit,initial:Number(firstValue(r,["Initial Stock","initial"],0))||0,received:Number(firstValue(r,["Parts Received","received"],0))||0,reorder:Number(firstValue(r,["Reorder Level (Low Alert)","Reorder Level","reorder"],0))||0,qtyPerUnit};
+  const file=document.getElementById('file').files[0];if(!file){toast('Select an Excel file first');return;}
+  const data=await file.arrayBuffer(),wb=XLSX.read(data,{type:'array'});
+  const invSheet=wb.Sheets['Inventory']||wb.Sheets[wb.SheetNames[0]],invJson=XLSX.utils.sheet_to_json(invSheet,{defval:''});
+  const bomMap={};const bomSheet=wb.Sheets['BOM'];
+  if(bomSheet){XLSX.utils.sheet_to_json(bomSheet,{defval:''}).filter(r=>String(firstValue(r,['Item','Part Name','item'],'')).trim()).forEach(r=>{const item=String(firstValue(r,['Item','Part Name','item'],'')).trim().toLowerCase(),raw=firstValue(r,['Qty per Unit','Pieces Per Unit','qty per unit'],'');bomMap[item]=parseMeasure(raw);});}
+  const imported=invJson.filter(r=>String(firstValue(r,['Item','item'],'')).trim()).map(r=>{
+    const name=String(firstValue(r,['Item','item'],'')).trim(),bom=bomMap[name.toLowerCase()];
+    let unit=String(firstValue(r,['Unit (pcs/mm)','Unit','unit'],'pcs')).trim().toLowerCase()||'pcs';
+    let qtyPerUnit=Number(firstValue(r,['Qty per Unit (Auto)','Qty per Unit','qtyPerUnit'],0))||0;
+    if(bom){if(bom.unit==='mm'&&bom.mm>0){qtyPerUnit=bom.mm;unit='mm';}else if(bom.qty>0){qtyPerUnit=bom.qty;}}
+    return{item:name,unit,initial:Number(firstValue(r,['Initial Stock','initial'],0))||0,received:Number(firstValue(r,['Parts Received','received'],0))||0,reorder:Number(firstValue(r,['Reorder Level (Low Alert)','Reorder Level','reorder'],0))||0,qtyPerUnit};
   });
   imported.forEach(imp=>{const exist=state.inventory.find(x=>x.item.toLowerCase()===imp.item.toLowerCase());if(exist){exist.unit=imp.unit;exist.initial=imp.initial;exist.qtyPerUnit=imp.qtyPerUnit;exist.reorder=imp.reorder;}else{state.inventory.push(imp);}});
-  const buildSheet=wb.Sheets["Build_Log"];
-  if(buildSheet){XLSX.utils.sheet_to_json(buildSheet,{defval:""}).filter(r=>Number(firstValue(r,["Units Built","units built"],0))>0).forEach(r=>{state.buildLog.push({date:excelDateToStr(firstValue(r,["Date","date"],"")),unitsBuilt:Number(firstValue(r,["Units Built","units built"],0))||0,unitId:String(firstValue(r,["Unit ID","unit id","unitId"],""))||undefined});});}
+  const buildSheet=wb.Sheets['Build_Log'];
+  if(buildSheet){XLSX.utils.sheet_to_json(buildSheet,{defval:''}).filter(r=>Number(firstValue(r,['Units Built','units built'],0))>0).forEach(r=>{state.buildLog.push({date:excelDateToStr(firstValue(r,['Date','date'],'')),unitsBuilt:Number(firstValue(r,['Units Built','units built'],0))||0,unitId:String(firstValue(r,['Unit ID','unit id','unitId'],''))||undefined});});}
   computeAll();saveLocal();toast(`Imported ${imported.length} items ✓`);
 }
-function exportData(){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:"application/json"}));a.download="k2_backup_"+new Date().toISOString().slice(0,10)+".json";a.click();}
-function clearAll(){if(!confirm("Clear ALL data? Cannot be undone."))return;state={inventory:[],buildLog:[],receiving:[],batteryUnits:[],selectedBatteryUnitId:null};localStorage.removeItem("k2_v4");localStorage.removeItem("k2_v3");saveLocal();renderAll();toast("All data cleared");}
-
-function fmt(v){const n=Number(v);return isNaN(n)?(v||""):(Number.isInteger(n)?n:n.toFixed(2));}
-function excelDateToStr(val){if(!val)return"";if(typeof val==="string"&&val.includes("-"))return val;const n=Number(val);if(!isNaN(n)&&n>40000&&n<100000){const d=new Date((n-25569)*86400*1000);return d.toLocaleDateString();}return String(val);}
-
-document.getElementById("receiveDate").valueAsDate=new Date();
-document.getElementById("unitDate").valueAsDate=new Date();
-computeAll();
-renderStatusPills("Assembly");
-updateConsumeNotice(true);
+function exportData(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}));a.download='k2_backup_'+new Date().toISOString().slice(0,10)+'.json';a.click();}
+function clearAll(){if(!confirm('Clear ALL data? Cannot be undone.'))return;state={inventory:[],buildLog:[],receiving:[],batteryUnits:[],selectedBatteryUnitId:null};localStorage.removeItem('k2_v4');localStorage.removeItem('k2_v3');saveLocal();renderAll();toast('All data cleared');}
+function fmt(v){const n=Number(v);return isNaN(n)?(v||''):(Number.isInteger(n)?n:n.toFixed(2));}
+function excelDateToStr(val){if(!val)return'';if(typeof val==='string'&&val.includes('-'))return val;const n=Number(val);if(!isNaN(n)&&n>40000&&n<100000){const d=new Date((n-25569)*86400*1000);return d.toLocaleDateString();}return String(val);}
 </script>
+
 </body>
 </html>
