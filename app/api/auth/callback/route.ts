@@ -8,7 +8,6 @@ export async function GET(request: NextRequest) {
   const error = searchParams.get('error');
 
   if (error || !code) {
-    console.error('[Auth] OAuth error or missing code:', error ?? 'no code');
     return NextResponse.redirect(new URL('/auth/error', origin));
   }
 
@@ -35,7 +34,6 @@ export async function GET(request: NextRequest) {
   const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
 
   if (exchangeError || !data.user) {
-    console.error('[Auth] Code exchange failed:', exchangeError?.message);
     return NextResponse.redirect(new URL('/auth/error', origin));
   }
 
